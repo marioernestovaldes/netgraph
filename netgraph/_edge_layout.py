@@ -835,7 +835,12 @@ class Segment(object):
         self.vector = p1 - p0
         self.length = np.linalg.norm(self.vector)
         self.unit_vector = self.vector / self.length
-        self.midpoint = self.p0 * 0.5 * self.vector
+        # Note that ``0.5 * self.vector`` would be half the edge vector. The
+        # intention here is to store the actual midpoint coordinates, not the
+        # halfway vector from ``p0``. Previously this was implemented as
+        # ``self.p0 * 0.5 * self.vector`` which is incorrect because it scales
+        # ``p0`` elementwise and therefore does not yield the midpoint.
+        self.midpoint = 0.5 * (self.p0 + self.p1)
 
     def __getitem__(self, idx):
         if idx == 0:
@@ -926,19 +931,24 @@ def _initialize_bundled_control_points(edges, node_positions):
 
 
 def _expand_control_points(edge_to_control_points):
-    "Place a new control point between each pair of existing control points."
+    """Place a new control point between each pair of existing control points.
+
+    The previous implementation inserted the new points via an explicit Python
+    loop which became a noticeable bottleneck for large graphs. The updated
+    version uses vectorised NumPy operations to insert the midpoints in one go.
+    """
     for edge, control_points_old in edge_to_control_points.items():
-        total_control_points_old = len(control_points_old)
-        total_control_points_new = 2 * (total_control_points_old - 1) + 1
-        control_points_new = np.zeros((total_control_points_new, 2))
-        for ii in range(total_control_points_new):
-            if (ii+1) % 2: # ii is even
-                control_points_new[ii] = control_points_old[int(ii/2)]
-            else: # ii is odd
-                p1 = control_points_old[int((ii-1)/2)]
-                p2 = control_points_old[int((ii+1)/2)]
-                control_points_new[ii] = 0.5 * (p2 - p1) + p1
+        n = len(control_points_old)
+        control_points_new = np.empty((2 * (n - 1) + 1, 2))
+
+        # Keep existing points in place.
+        control_points_new[::2] = control_points_old
+
+        # Insert new control points halfway between adjacent points.
+        control_points_new[1::2] = 0.5 * (control_points_old[:-1] + control_points_old[1:])
+
         edge_to_control_points[edge] = control_points_new
+
     return edge_to_control_points
 
 
@@ -1017,12 +1027,22 @@ def _smooth_path(path):
     distance = np.cumsum( np.sqrt(np.sum( np.diff(path, axis=0)**2, axis=1 )) )
     distance = np.insert(distance, 0, 0)/distance[-1]
 
-    # Compute a spline function for each dimension:
+    # Compute a spline function for each dimension. A small smoothing factor is
+    # retained for aesthetic purposes, but the end points are subsequently
+    # enforced to remain anchored at the node positions to avoid disconnected
+    # edges when plotted.
     splines = [UnivariateSpline(distance, coords, k=3, s=.001) for coords in path.T]
 
-    # Computed the smoothed path:
+    # Compute the smoothed path:
     alpha = np.linspace(0, 1, 100)
-    return np.vstack([spl(alpha) for spl in splines]).T
+    smoothed = np.vstack([spl(alpha) for spl in splines]).T
+
+    # Ensure that the first and last coordinates coincide with the original end
+    # points to prevent small numerical deviations from disconnecting edges from
+    # their nodes.
+    smoothed[0] = path[0]
+    smoothed[-1] = path[-1]
+    return smoothed
 
 
 def _straighten_edges(edge_to_path, straighten_by):
