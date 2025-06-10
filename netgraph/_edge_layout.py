@@ -902,10 +902,12 @@ def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
         return edge_compatibility
     else:
         from concurrent.futures import ProcessPoolExecutor
-        chunks = np.array_split(pairs, processes)
+        import math
+        chunk_size = math.ceil(len(pairs) / processes)
+        chunks = [pairs[i:i + chunk_size] for i in range(0, len(pairs), chunk_size)]
         edge_compatibility = []
         with ProcessPoolExecutor(max_workers=processes) as pool:
-            args = [(chunk.tolist(), edge_to_segment, threshold) for chunk in chunks if len(chunk)]
+            args = [(chunk, edge_to_segment, threshold) for chunk in chunks if chunk]
             for res in pool.map(_edge_compatibility_worker, args):
                 edge_compatibility.extend(res)
         return edge_compatibility
