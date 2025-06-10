@@ -1077,8 +1077,12 @@ def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
         return out
     else:
         from concurrent.futures import ProcessPoolExecutor
-        chunks = np.array_split(edge_compatibility, processes)
-        args = [(chunk.tolist(), edge_to_control_points) for chunk in chunks if len(chunk)]
+        import math
+        if not edge_compatibility:
+            return out
+        chunk_size = math.ceil(len(edge_compatibility) / processes)
+        chunks = [edge_compatibility[i:i + chunk_size] for i in range(0, len(edge_compatibility), chunk_size)]
+        args = [(chunk, edge_to_control_points) for chunk in chunks if chunk]
         with ProcessPoolExecutor(max_workers=processes) as pool:
             partials = pool.map(_Fe_worker, args)
         for partial in partials:

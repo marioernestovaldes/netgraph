@@ -169,3 +169,16 @@ def test_bundled_edges_processes_one():
     paths_process = get_bundled_edge_paths(edges, node_positions, processes=1)
     for edge in paths_serial:
         assert np.allclose(paths_serial[edge], paths_process[edge])
+
+
+def test_bundled_edges_processes_two():
+    edges = [(0, 1), (1, 2)]
+    node_positions = {
+        0: np.array([0, 0.25]),
+        1: np.array([0.5, 0.75]),
+        2: np.array([1, 0.25]),
+    }
+    paths_serial = get_bundled_edge_paths(edges, node_positions)
+    paths_process = get_bundled_edge_paths(edges, node_positions, processes=2)
+    for edge in paths_serial:
+        assert np.allclose(paths_serial[edge], paths_process[edge])
