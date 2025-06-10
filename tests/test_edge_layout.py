@@ -8,7 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from netgraph._main import Graph
-from netgraph._edge_layout import get_bundled_edge_paths
+from netgraph._edge_layout import (
+    get_bundled_edge_paths,
+    _get_edge_compatibility,
+    _initialize_bundled_control_points,
+    _get_Fe,
+)
 from netgraph._utils import _get_point_on_a_circle
 from toy_graphs import star
 
@@ -169,3 +174,31 @@ def test_bundled_edges_processes_one():
     paths_process = get_bundled_edge_paths(edges, node_positions, processes=1)
     for edge in paths_serial:
         assert np.allclose(paths_serial[edge], paths_process[edge])
+
+
+def test_bundled_edges_single_edge_processes_two():
+    edges = [(0, 1)]
+    node_positions = {
+        0: np.array([0, 0]),
+        1: np.array([1, 0]),
+    }
+    paths = get_bundled_edge_paths(edges, node_positions, processes=2)
+    path = paths[(0, 1)]
+    assert np.allclose(path[0], node_positions[0])
+    assert np.allclose(path[-1], node_positions[1])
+
+
+def test_get_edge_compatibility_single_edge_processes_two():
+    edges = [(0, 1)]
+    node_positions = {0: np.array([0, 0]), 1: np.array([1, 0])}
+    compat = _get_edge_compatibility(edges, node_positions, 0.05, processes=2)
+    assert compat == []
+
+
+def test_get_Fe_empty_compatibility_processes_two():
+    edges = [(0, 1)]
+    node_positions = {0: np.array([0, 0]), 1: np.array([1, 0])}
+    cp = _initialize_bundled_control_points(edges, node_positions)
+    out = {(0, 1): np.zeros((2, 2))}
+    res = _get_Fe(cp, [], out.copy(), processes=2)
+    assert np.array_equal(res[(0, 1)], out[(0, 1)])
