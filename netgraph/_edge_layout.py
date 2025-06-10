@@ -695,6 +695,7 @@ def get_bundled_edge_paths(edges, node_positions,
                            total_iterations        = 50,
                            step_size               = 0.04,
                            straighten_by           = 0.,
+                           processes               = None,
 ):
     """Edge routing with bundled edge paths.
 
@@ -729,7 +730,10 @@ def get_bundled_edge_paths(edges, node_positions,
         A small amount of straightening can help indicating the number of
         edges comprising a bundle by widening the bundle.
         If set to one, edges are fully un-bundled and plotted as stright lines.
-
+    processes : int or None, optional
+        Number of processes used to parallelise the edge compatibility and
+        force calculations. ``None`` (default) disables parallel processing.
+    
     Returns
     -------
     edge_paths : dict
@@ -761,7 +765,7 @@ def get_bundled_edge_paths(edges, node_positions,
 
     edge_to_k = _get_k(edges, node_positions, k)
 
-    edge_compatibility = _get_edge_compatibility(edges, node_positions, compatibility_threshold)
+    edge_compatibility = _get_edge_compatibility(edges, node_positions, compatibility_threshold, processes)
 
     edge_to_control_points = _initialize_bundled_control_points(edges, node_positions)
 
@@ -770,7 +774,7 @@ def get_bundled_edge_paths(edges, node_positions,
 
         for _ in range(total_iterations):
             F = _get_Fs(edge_to_control_points, edge_to_k)
-            F = _get_Fe(edge_to_control_points, edge_compatibility, F)
+            F = _get_Fe(edge_to_control_points, edge_compatibility, F, processes)
             edge_to_control_points = _update_control_point_positions(
                 edge_to_control_points, F, step_size)
 
@@ -794,38 +798,117 @@ def _get_k(edges, node_positions, k):
     return {(s, t) : k / np.linalg.norm(node_positions[t] - node_positions[s]) for (s, t) in edges}
 
 
-@profile
-def _get_edge_compatibility(edges, node_positions, threshold):
-    """Compute the compatibility between all edge pairs."""
-    # precompute edge segments, segment lengths and corresponding vectors
-    edge_to_segment = {edge : Segment(node_positions[edge[0]], node_positions[edge[1]]) for edge in edges}
-
-    edge_compatibility = list()
-    for e1, e2 in itertools.combinations(edges, 2):
+def _edge_compatibility_worker(args):
+    """Worker computing compatibility for a chunk of edge pairs."""
+    chunk, edge_to_segment, threshold = args
+    out = []
+    for e1, e2 in chunk:
         P = edge_to_segment[e1]
         Q = edge_to_segment[e2]
 
         compatibility = 1
         compatibility *= _get_scale_compatibility(P, Q)
         if compatibility < threshold:
-            continue # with next edge pair
+            continue
         compatibility *= _get_position_compatibility(P, Q)
         if compatibility < threshold:
-            continue # with next edge pair
+            continue
         compatibility *= _get_angle_compatibility(P, Q)
         if compatibility < threshold:
-            continue # with next edge pair
+            continue
         compatibility *= _get_visibility_compatibility(P, Q)
         if compatibility < threshold:
-            continue # with next edge pair
+            continue
 
-        # Also determine if one of the edges needs to be reversed:
         reverse = min(np.linalg.norm(P[0] - Q[0]), np.linalg.norm(P[1] - Q[1])) > \
             min(np.linalg.norm(P[0] - Q[1]), np.linalg.norm(P[1] - Q[0]))
 
-        edge_compatibility.append((e1, e2, compatibility, reverse))
+        out.append((e1, e2, compatibility, reverse))
+    return out
 
-    return edge_compatibility
+
+def _Fe_worker(args):
+    """Worker computing electrostatic forces for a chunk of edge pairs."""
+    chunk, edge_to_control_points = args
+    partial = {}
+    for e1, e2, compatibility, reverse in chunk:
+        P = edge_to_control_points[e1]
+        Q = edge_to_control_points[e2]
+
+        if not reverse:
+            delta = Q - P
+        else:
+            delta = Q[::-1] - P
+
+        distance_squared = delta[:, 0]**2 + delta[:, 1]**2
+        displacement = compatibility * delta / distance_squared[..., None]
+
+        displacement[0] = 0
+        displacement[-1] = 0
+
+        d1 = partial.get(e1)
+        if d1 is None:
+            partial[e1] = displacement.copy()
+        else:
+            partial[e1] = d1 + displacement
+
+        if not reverse:
+            d2 = partial.get(e2)
+            if d2 is None:
+                partial[e2] = -displacement.copy()
+            else:
+                partial[e2] = d2 - displacement
+        else:
+            disp_rev = displacement[::-1]
+            d2 = partial.get(e2)
+            if d2 is None:
+                partial[e2] = -disp_rev.copy()
+            else:
+                partial[e2] = d2 - disp_rev
+    return partial
+
+
+@profile
+def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
+    """Compute the compatibility between all edge pairs."""
+    # precompute edge segments, segment lengths and corresponding vectors
+    edge_to_segment = {edge : Segment(node_positions[edge[0]], node_positions[edge[1]]) for edge in edges}
+
+    pairs = list(itertools.combinations(edges, 2))
+    if (processes is None) or (processes <= 1):
+        edge_compatibility = []
+        for e1, e2 in pairs:
+            P = edge_to_segment[e1]
+            Q = edge_to_segment[e2]
+
+            compatibility = 1
+            compatibility *= _get_scale_compatibility(P, Q)
+            if compatibility < threshold:
+                continue
+            compatibility *= _get_position_compatibility(P, Q)
+            if compatibility < threshold:
+                continue
+            compatibility *= _get_angle_compatibility(P, Q)
+            if compatibility < threshold:
+                continue
+            compatibility *= _get_visibility_compatibility(P, Q)
+            if compatibility < threshold:
+                continue
+
+            reverse = min(np.linalg.norm(P[0] - Q[0]), np.linalg.norm(P[1] - Q[1])) > \
+                min(np.linalg.norm(P[0] - Q[1]), np.linalg.norm(P[1] - Q[0]))
+
+            edge_compatibility.append((e1, e2, compatibility, reverse))
+        return edge_compatibility
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        chunks = np.array_split(pairs, processes)
+        edge_compatibility = []
+        with ProcessPoolExecutor(max_workers=processes) as pool:
+            args = [(chunk.tolist(), edge_to_segment, threshold) for chunk in chunks if len(chunk)]
+            for res in pool.map(_edge_compatibility_worker, args):
+                edge_compatibility.extend(res)
+        return edge_compatibility
 
 
 class Segment(object):
@@ -966,38 +1049,40 @@ def _get_Fs(edge_to_control_points, k):
 
 
 @profile
-def _get_Fe(edge_to_control_points, edge_compatibility, out):
+def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
     """Compute all electrostatic forces."""
-    for e1, e2, compatibility, reverse in edge_compatibility:
-        P = edge_to_control_points[e1]
-        Q = edge_to_control_points[e2]
+    if (processes is None) or (processes <= 1):
+        for e1, e2, compatibility, reverse in edge_compatibility:
+            P = edge_to_control_points[e1]
+            Q = edge_to_control_points[e2]
 
-        if not reverse:
-            # i.e. if source/source or target/target closest
-            delta = Q - P
-        else:
-            # need to reverse one set of control points
-            delta = Q[::-1] - P
+            if not reverse:
+                delta = Q - P
+            else:
+                delta = Q[::-1] - P
 
-        # # desired computation:
-        # distance = np.linalg.norm(delta, axis=1)
-        # displacement = compatibility * delta / distance[..., None]**2
+            distance_squared = delta[:, 0]**2 + delta[:, 1]**2
+            displacement = compatibility * delta / distance_squared[..., None]
 
-        # actually much faster:
-        distance_squared = delta[:, 0]**2 + delta[:, 1]**2
-        displacement = compatibility * delta / distance_squared[..., None]
+            displacement[0] = 0
+            displacement[-1] = 0
 
-        # Don't move the first and last control point, which are just the node positions.
-        displacement[0] = 0
-        displacement[-1] = 0
-
-        out[e1] += displacement
-        if not reverse:
-            out[e2] -= displacement
-        else:
-            out[e2] -= displacement[::-1]
-
-    return out
+            out[e1] += displacement
+            if not reverse:
+                out[e2] -= displacement
+            else:
+                out[e2] -= displacement[::-1]
+        return out
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        chunks = np.array_split(edge_compatibility, processes)
+        args = [(chunk.tolist(), edge_to_control_points) for chunk in chunks if len(chunk)]
+        with ProcessPoolExecutor(max_workers=processes) as pool:
+            partials = pool.map(_Fe_worker, args)
+        for partial in partials:
+            for edge, disp in partial.items():
+                out[edge] += disp
+        return out
 
 
 def _update_control_point_positions(edge_to_control_points, F, step_size):
