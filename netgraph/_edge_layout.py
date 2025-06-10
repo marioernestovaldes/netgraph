@@ -41,6 +41,13 @@ try:
 except NameError:
     profile = lambda x: x
 
+# below this edge count, the vectorised compatibility computation is used even
+# if multiple processes are requested
+EDGE_COMPATIBILITY_VECTOR_THRESHOLD = 200
+
+# minimum number of edge pairs per chunk to trigger the vectorised worker
+_CHUNK_VECTOR_MIN = 8
+
 
 def _handle_multiple_components(layout_function):
     """If the graph contains multiple components, apply the given layout to each component individually."""
@@ -815,8 +822,8 @@ def _get_k(edges, node_positions, k):
     return {(s, t) : k / np.linalg.norm(node_positions[t] - node_positions[s]) for (s, t) in edges}
 
 
-def _edge_compatibility_worker(args):
-    """Worker computing compatibility for a chunk of edge pairs."""
+def _edge_compatibility_worker_loop(args):
+    """Loop-based computation of compatibility for a chunk of edge pairs."""
     chunk, edge_to_segment, threshold = args
     out = []
     for e1, e2 in chunk:
@@ -842,6 +849,50 @@ def _edge_compatibility_worker(args):
 
         out.append((e1, e2, compatibility, reverse))
     return out
+
+
+def _edge_compatibility_worker(args):
+    """Vectorised worker computing compatibility for a chunk of edge pairs."""
+    chunk, edge_to_segment, threshold = args
+    if len(chunk) < _CHUNK_VECTOR_MIN:
+        return _edge_compatibility_worker_loop(args)
+
+    e1, e2 = zip(*chunk)
+    P = [edge_to_segment[e] for e in e1]
+    Q = [edge_to_segment[e] for e in e2]
+
+    P0 = np.array([seg.p0 for seg in P])
+    P1 = np.array([seg.p1 for seg in P])
+    Pvec = np.array([seg.vector for seg in P])
+    Plen = np.array([seg.length for seg in P])
+    Punit = np.array([seg.unit_vector for seg in P])
+    Pmid = np.array([seg.midpoint for seg in P])
+
+    Q0 = np.array([seg.p0 for seg in Q])
+    Q1 = np.array([seg.p1 for seg in Q])
+    Qvec = np.array([seg.vector for seg in Q])
+    Qlen = np.array([seg.length for seg in Q])
+    Qunit = np.array([seg.unit_vector for seg in Q])
+    Qmid = np.array([seg.midpoint for seg in Q])
+
+    avg = 0.5 * (Plen + Qlen)
+    scale = 2 / (avg / np.minimum(Plen, Qlen) + np.maximum(Plen, Qlen) / avg)
+    position = avg / (avg + np.linalg.norm(Qmid - Pmid, axis=1))
+    angle = np.abs(np.einsum('ij,ij->i', Punit, Qunit))
+    visibility1 = _visibility_array(P0, P1, Q0, Q1, Pvec, Plen, Pmid)
+    visibility2 = _visibility_array(Q0, Q1, P0, P1, Qvec, Qlen, Qmid)
+    visibility = np.minimum(visibility1, visibility2)
+
+    compatibility = scale * position * angle * visibility
+    reverse = np.minimum(np.linalg.norm(P0 - Q0, axis=1), np.linalg.norm(P1 - Q1, axis=1)) > \
+        np.minimum(np.linalg.norm(P0 - Q1, axis=1), np.linalg.norm(P1 - Q0, axis=1))
+
+    mask = compatibility >= threshold
+
+    return [
+        (e1[i], e2[i], compatibility[i], reverse[i])
+        for i in range(len(chunk)) if mask[i]
+    ]
 
 
 def _Fe_worker(args):
@@ -892,7 +943,7 @@ def _get_edge_compatibility(edges, node_positions, threshold, processes=None, po
     if len(edges) < 2:
         return []
 
-    if ((processes is None) or (processes <= 1)) and pool is None:
+    if (processes is None) or (processes <= 1) or (len(edges) <= EDGE_COMPATIBILITY_VECTOR_THRESHOLD):
         # Vectorised implementation for single process execution.
         edges = list(edges)
         p0 = np.array([node_positions[s] for s, _ in edges])
