@@ -841,7 +841,8 @@ def _Fe_worker(args):
             delta = Q[::-1] - P
 
         distance_squared = delta[:, 0]**2 + delta[:, 1]**2
-        displacement = compatibility * delta / distance_squared[..., None]
+        distance_squared[distance_squared == 0] = 1e-12
+        displacement = compatibility * delta / distance_squared[:, None]
 
         displacement[0] = 0
         displacement[-1] = 0
@@ -1072,7 +1073,8 @@ def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
                 delta = Q[::-1] - P
 
             distance_squared = delta[:, 0]**2 + delta[:, 1]**2
-            displacement = compatibility * delta / distance_squared[..., None]
+            distance_squared[distance_squared == 0] = 1e-12
+            displacement = compatibility * delta / distance_squared[:, None]
 
             displacement[0] = 0
             displacement[-1] = 0
