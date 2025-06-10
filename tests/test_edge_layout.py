@@ -8,7 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from netgraph._main import Graph
-from netgraph._edge_layout import get_bundled_edge_paths
+from netgraph._edge_layout import (
+    get_bundled_edge_paths,
+    _get_edge_compatibility,
+    _initialize_bundled_control_points,
+    _get_Fe,
+)
 from netgraph._utils import _get_point_on_a_circle
 from toy_graphs import star
 

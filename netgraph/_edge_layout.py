@@ -875,6 +875,12 @@ def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
     edge_to_segment = {edge : Segment(node_positions[edge[0]], node_positions[edge[1]]) for edge in edges}
 
     pairs = list(itertools.combinations(edges, 2))
+
+    # Short-circuit when there are no edge pairs to compare. This occurs for
+    # example when the graph consists of a single edge.
+    if not pairs:
+        return []
+
     if (processes is None) or (processes <= 1):
         edge_compatibility = []
         for e1, e2 in pairs:
@@ -1053,6 +1059,8 @@ def _get_Fs(edge_to_control_points, k):
 @profile
 def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
     """Compute all electrostatic forces."""
+    if not edge_compatibility:
+        return out
     if (processes is None) or (processes <= 1):
         for e1, e2, compatibility, reverse in edge_compatibility:
             P = edge_to_control_points[e1]
