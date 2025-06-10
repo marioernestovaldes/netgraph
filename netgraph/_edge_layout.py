@@ -695,14 +695,16 @@ def get_arced_edge_paths(edges, node_positions, rad=1.,
 
 @profile
 @_handle_multiple_components
-def get_bundled_edge_paths(edges, node_positions,
-                           k                       = 1000.,
-                           compatibility_threshold = 0.05,
-                           total_cycles            = 5,
-                           total_iterations        = 50,
-                           step_size               = 0.04,
-                           straighten_by           = 0.,
-                           processes               = None,
+def get_bundled_edge_paths(
+    edges,
+    node_positions,
+    k=1000.0,
+    compatibility_threshold=0.05,
+    total_cycles=5,
+    total_iterations=50,
+    step_size=0.04,
+    straighten_by=0.0,
+    processes=None,
 ):
     """Edge routing with bundled edge paths.
 
@@ -772,32 +774,47 @@ def get_bundled_edge_paths(edges, node_positions,
 
     edge_to_k = _get_k(edges, node_positions, k)
 
-    edge_compatibility = _get_edge_compatibility(edges, node_positions, compatibility_threshold, processes)
+    pool = None
+    if (processes is not None) and (processes > 1):
+        from concurrent.futures import ProcessPoolExecutor
+        pool = ProcessPoolExecutor(max_workers=processes)
+    try:
+        edge_compatibility = _get_edge_compatibility(
+            edges,
+            node_positions,
+            compatibility_threshold,
+            processes,
+            pool=pool,
+        )
 
-    edge_to_control_points = _initialize_bundled_control_points(edges, node_positions)
+        edge_to_control_points = _initialize_bundled_control_points(edges, node_positions)
 
-    for _ in range(total_cycles):
-        edge_to_control_points = _expand_control_points(edge_to_control_points)
+        for _ in range(total_cycles):
+            edge_to_control_points = _expand_control_points(edge_to_control_points)
 
-        for _ in range(total_iterations):
-            F = _get_Fs(edge_to_control_points, edge_to_k)
-            F = _get_Fe(edge_to_control_points, edge_compatibility, F, processes)
-            edge_to_control_points = _update_control_point_positions(
-                edge_to_control_points, F, step_size)
+            for _ in range(total_iterations):
+                F = _get_Fs(edge_to_control_points, edge_to_k)
+                F = _get_Fe(edge_to_control_points, edge_compatibility, F, processes, pool=pool)
+                edge_to_control_points = _update_control_point_positions(
+                    edge_to_control_points, F, step_size
+                )
 
-        step_size /= 2.
-        total_iterations = int(2/3 * total_iterations)
+            step_size /= 2.0
+            total_iterations = int(2 / 3 * total_iterations)
 
-    if straighten_by > 0.:
-        edge_to_control_points = _straighten_edges(edge_to_control_points, straighten_by)
+        if straighten_by > 0.0:
+            edge_to_control_points = _straighten_edges(edge_to_control_points, straighten_by)
 
-    edge_to_control_points = _smooth_edges(edge_to_control_points)
+        edge_to_control_points = _smooth_edges(edge_to_control_points)
 
-    # Add previously removed bi-directional edges back in.
-    for (source, target) in reverse_edges:
-        edge_to_control_points[(source, target)] = edge_to_control_points[(target, source)][::-1]
+        # Add previously removed bi-directional edges back in.
+        for (source, target) in reverse_edges:
+            edge_to_control_points[(source, target)] = edge_to_control_points[(target, source)][::-1]
 
-    return edge_to_control_points
+        return edge_to_control_points
+    finally:
+        if pool is not None:
+            pool.shutdown()
 
 
 def _get_k(edges, node_positions, k):
@@ -921,7 +938,7 @@ def _Fe_worker(args):
 
 
 @profile
-def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
+def _get_edge_compatibility(edges, node_positions, threshold, processes=None, pool=None):
     """Compute the compatibility between all edge pairs."""
     if len(edges) < 2:
         return []
@@ -977,12 +994,18 @@ def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
 
         pairs = list(itertools.combinations(edges, 2))
 
-        from concurrent.futures import ProcessPoolExecutor
         import math
-        chunk_size = math.ceil(len(pairs) / processes)
+        workers = processes if pool is None else pool._max_workers
+        chunk_size = math.ceil(len(pairs) / workers)
         chunks = [pairs[i:i + chunk_size] for i in range(0, len(pairs), chunk_size)]
         edge_compatibility = []
-        with ProcessPoolExecutor(max_workers=processes) as pool:
+        if pool is None:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=processes) as pool_local:
+                args = [(chunk, edge_to_segment, threshold) for chunk in chunks if chunk]
+                for res in pool_local.map(_edge_compatibility_worker, args):
+                    edge_compatibility.extend(res)
+        else:
             args = [(chunk, edge_to_segment, threshold) for chunk in chunks if chunk]
             for res in pool.map(_edge_compatibility_worker, args):
                 edge_compatibility.extend(res)
@@ -1141,11 +1164,11 @@ def _get_Fs(edge_to_control_points, k):
 
 
 @profile
-def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
+def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None, pool=None):
     """Compute all electrostatic forces."""
     if not edge_compatibility:
         return out
-    if (processes is None) or (processes <= 1):
+    if ((processes is None) or (processes <= 1)) and pool is None:
         for e1, e2, compatibility, reverse in edge_compatibility:
             P = edge_to_control_points[e1]
             Q = edge_to_control_points[e2]
@@ -1169,18 +1192,23 @@ def _get_Fe(edge_to_control_points, edge_compatibility, out, processes=None):
                 out[e2] -= displacement[::-1]
         return out
     else:
-        from concurrent.futures import ProcessPoolExecutor
         import math
-        if not edge_compatibility:
-            return out
-        chunk_size = math.ceil(len(edge_compatibility) / processes)
+        workers = processes if pool is None else pool._max_workers
+        chunk_size = math.ceil(len(edge_compatibility) / workers)
         chunks = [edge_compatibility[i:i + chunk_size] for i in range(0, len(edge_compatibility), chunk_size)]
         args = [(chunk, edge_to_control_points) for chunk in chunks if chunk]
-        with ProcessPoolExecutor(max_workers=processes) as pool:
+        if pool is None:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=processes) as pool_local:
+                partials = pool_local.map(_Fe_worker, args)
+                for partial in partials:
+                    for edge, disp in partial.items():
+                        out[edge] += disp
+        else:
             partials = pool.map(_Fe_worker, args)
-        for partial in partials:
-            for edge, disp in partial.items():
-                out[edge] += disp
+            for partial in partials:
+                for edge, disp in partial.items():
+                    out[edge] += disp
         return out
 
 
