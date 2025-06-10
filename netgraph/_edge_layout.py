@@ -872,42 +872,60 @@ def _Fe_worker(args):
 @profile
 def _get_edge_compatibility(edges, node_positions, threshold, processes=None):
     """Compute the compatibility between all edge pairs."""
-    # precompute edge segments, segment lengths and corresponding vectors
-    edge_to_segment = {edge : Segment(node_positions[edge[0]], node_positions[edge[1]]) for edge in edges}
-
-    pairs = list(itertools.combinations(edges, 2))
-
-    # Short-circuit when there are no edge pairs to compare. This occurs for
-    # example when the graph consists of a single edge.
-    if not pairs:
+    if len(edges) < 2:
         return []
 
     if (processes is None) or (processes <= 1):
-        edge_compatibility = []
-        for e1, e2 in pairs:
-            P = edge_to_segment[e1]
-            Q = edge_to_segment[e2]
+        # Vectorised implementation for single process execution.
+        edges = list(edges)
+        p0 = np.array([node_positions[s] for s, _ in edges])
+        p1 = np.array([node_positions[t] for _, t in edges])
+        vec = p1 - p0
+        length = np.linalg.norm(vec, axis=1)
+        unit = vec / length[:, None]
+        mid = 0.5 * (p0 + p1)
 
-            compatibility = 1
-            compatibility *= _get_scale_compatibility(P, Q)
-            if compatibility < threshold:
-                continue
-            compatibility *= _get_position_compatibility(P, Q)
-            if compatibility < threshold:
-                continue
-            compatibility *= _get_angle_compatibility(P, Q)
-            if compatibility < threshold:
-                continue
-            compatibility *= _get_visibility_compatibility(P, Q)
-            if compatibility < threshold:
-                continue
+        idx1, idx2 = np.triu_indices(len(edges), 1)
 
-            reverse = min(np.linalg.norm(P[0] - Q[0]), np.linalg.norm(P[1] - Q[1])) > \
-                min(np.linalg.norm(P[0] - Q[1]), np.linalg.norm(P[1] - Q[0]))
+        P0 = p0[idx1]
+        P1 = p1[idx1]
+        Pvec = vec[idx1]
+        Plen = length[idx1]
+        Punit = unit[idx1]
+        Pmid = mid[idx1]
 
-            edge_compatibility.append((e1, e2, compatibility, reverse))
-        return edge_compatibility
+        Q0 = p0[idx2]
+        Q1 = p1[idx2]
+        Qvec = vec[idx2]
+        Qlen = length[idx2]
+        Qunit = unit[idx2]
+        Qmid = mid[idx2]
+
+        avg = 0.5 * (Plen + Qlen)
+        scale = 2 / (avg / np.minimum(Plen, Qlen) + np.maximum(Plen, Qlen) / avg)
+        position = avg / (avg + np.linalg.norm(Qmid - Pmid, axis=1))
+        angle = np.abs(np.einsum('ij,ij->i', Punit, Qunit))
+        visibility1 = _visibility_array(P0, P1, Q0, Q1, Pvec, Plen, Pmid)
+        visibility2 = _visibility_array(Q0, Q1, P0, P1, Qvec, Qlen, Qmid)
+        visibility = np.minimum(visibility1, visibility2)
+
+        compatibility = scale * position * angle * visibility
+        reverse = np.minimum(np.linalg.norm(P0 - Q0, axis=1), np.linalg.norm(P1 - Q1, axis=1)) > \
+            np.minimum(np.linalg.norm(P0 - Q1, axis=1), np.linalg.norm(P1 - Q0, axis=1))
+
+        mask = compatibility >= threshold
+
+        edges1 = [edges[i] for i in idx1[mask]]
+        edges2 = [edges[i] for i in idx2[mask]]
+        comps = compatibility[mask]
+        revs = reverse[mask]
+        return list(zip(edges1, edges2, comps, revs))
     else:
+        # Multiprocessing path retains the original Segment based implementation.
+        edge_to_segment = {edge: Segment(node_positions[edge[0]], node_positions[edge[1]]) for edge in edges}
+
+        pairs = list(itertools.combinations(edges, 2))
+
         from concurrent.futures import ProcessPoolExecutor
         import math
         chunk_size = math.ceil(len(pairs) / processes)
@@ -1011,6 +1029,20 @@ def _get_visibility(P, Q):
     distance_between_midpoints = np.linalg.norm(P.midpoint - I.midpoint)
     visibility = 1 - 2 * distance_between_midpoints / I.length
     return max(visibility, 0)
+
+
+def _visibility_array(p0, p1, q0, q1, vec, length, midpoint):
+    """Vectorised equivalent of :func:`_get_visibility` for arrays."""
+    t0 = np.einsum('ij,ij->i', q0 - p0, vec) / (length ** 2)
+    I0 = p0 + t0[:, None] * vec
+    t1 = np.einsum('ij,ij->i', q1 - p0, vec) / (length ** 2)
+    I1 = p0 + t1[:, None] * vec
+    I_mid = 0.5 * (I0 + I1)
+    dist = np.linalg.norm(midpoint - I_mid, axis=1)
+    I_len = np.linalg.norm(I1 - I0, axis=1)
+    visibility = 1 - 2 * dist / I_len
+    visibility[visibility < 0] = 0
+    return visibility
 
 
 def _initialize_bundled_control_points(edges, node_positions):
