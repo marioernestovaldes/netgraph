@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from netgraph._main import Graph
+from netgraph._edge_layout import get_bundled_edge_paths
 from netgraph._utils import _get_point_on_a_circle
 from toy_graphs import star
 
@@ -154,3 +155,17 @@ def test_draw_star_graph_with_bundled_edges():
     node_positions = {k : np.array(v) for k, v in node_positions.items()}
     Graph(star, node_layout=node_positions, edge_layout='bundled', ax=ax)
     return fig
+
+
+def test_bundled_edges_processes_one():
+    edges = [(0, 1), (2, 3)]
+    node_positions = {
+        0: np.array([0, 0.25]),
+        1: np.array([1, 0.25]),
+        2: np.array([0, 0.75]),
+        3: np.array([1, 0.75]),
+    }
+    paths_serial = get_bundled_edge_paths(edges, node_positions)
+    paths_process = get_bundled_edge_paths(edges, node_positions, processes=1)
+    for edge in paths_serial:
+        assert np.allclose(paths_serial[edge], paths_process[edge])
