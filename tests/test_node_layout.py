@@ -11,6 +11,7 @@ from itertools import combinations
 from random import choice
 
 from netgraph._main import Graph
+from netgraph import get_community_layout
 from toy_graphs import (
     cycle,
     unbalanced_tree,
@@ -234,3 +235,30 @@ def test_geometric_layout():
     Graph(list(square.keys()), node_layout='geometric', node_layout_kwargs=dict(edge_length=square), ax=ax2)
 
     return fig
+
+
+def test_community_layout_separation_scaling():
+    """Higher separation should increase distances between community centroids."""
+    edges = [
+        (0, 1), (1, 2), (2, 0),
+        (3, 4), (4, 5), (5, 3),
+        (2, 3)
+    ]
+    node_to_community = {
+        0: 0, 1: 0, 2: 0,
+        3: 1, 4: 1, 5: 1,
+    }
+
+    communities = [[0, 1, 2], [3, 4, 5]]
+
+    pos_default = get_community_layout(edges, node_to_community=node_to_community, separation=1.0)
+    pos_spread = get_community_layout(edges, node_to_community=node_to_community, separation=3.0)
+
+    def avg_centroid_distance(positions):
+        centroids = []
+        for nodes in communities:
+            coords = np.array([positions[n] for n in nodes])
+            centroids.append(coords.mean(axis=0))
+        return np.linalg.norm(centroids[0] - centroids[1])
+
+    assert avg_centroid_distance(pos_spread) > avg_centroid_distance(pos_default)

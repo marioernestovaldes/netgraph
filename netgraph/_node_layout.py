@@ -1499,7 +1499,7 @@ def get_shell_layout(edges, shells, radii=None, origin=(0, 0), scale=(1, 1), pad
 
 
 @_handle_multiple_components
-def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05):
+def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05, separation=1.0):
     """Community node layout for modular graphs.
 
     This implements the following steps:
@@ -1536,6 +1536,11 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
 
         :code:`ymax = origin[1] + scale[1] - pad_by * scale[1]`
 
+    separation : float, default 1.0
+        Scaling factor that controls the spacing between communities. Values
+        greater than ``1`` increase the distance between community centroids,
+        while values less than ``1`` move them closer together.
+
     Returns
     -------
     node_positions : dict
@@ -1555,7 +1560,7 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
     node_to_community = {node : node_to_community[node] for node in nodes}
 
     community_size = _get_community_sizes(node_to_community, scale)
-    community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by)
+    community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation)
     relative_node_positions = _get_within_community_positions(edges, node_to_community)
     node_positions = _combine_positions(node_to_community, community_centroids, community_size, relative_node_positions)
     node_positions = _rotate_communities(edges, node_to_community, community_centroids, node_positions)
@@ -1573,17 +1578,37 @@ def _get_community_sizes(node_to_community, scale):
     return community_size
 
 
-def _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by):
-    """Compute a centroid position for each community."""
+def _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation):
+    """Compute a centroid position for each community.
+
+    Parameters
+    ----------
+    separation : float
+        Scaling factor applied to the inter-community edge weights before
+        computing the spring layout. Higher values lead to increased spacing
+        between communities.
+    """
     # create a weighted graph, in which each node corresponds to a community,
     # and each edge weight to the number of edges between communities
     between_community_edges = _find_between_community_edges(edges, node_to_community)
+    between_community_edges = {
+        edge: weight * separation for edge, weight in between_community_edges.items()
+    }
 
     # find layout for communities
-    return get_fruchterman_reingold_layout(
+    community_centroids = get_fruchterman_reingold_layout(
         list(between_community_edges.keys()), edge_weight=between_community_edges,
         node_size=community_size, origin=origin, scale=scale, pad_by=pad_by,
     )
+
+    if separation != 1.0:
+        keys = list(community_centroids.keys())
+        values = np.array(list(community_centroids.values()))
+        center = values.mean(axis=0)
+        scaled = (values - center) * separation + center
+        community_centroids = dict(zip(keys, scaled))
+
+    return community_centroids
 
 
 def _find_between_community_edges(edges, node_to_community):
