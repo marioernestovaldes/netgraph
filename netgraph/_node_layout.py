@@ -1584,9 +1584,12 @@ def _get_community_positions(edges, node_to_community, community_size, origin, s
     Parameters
     ----------
     separation : float
-        Scaling factor applied to the inter-community edge weights before
-        computing the spring layout. Higher values lead to increased spacing
-        between communities.
+        Scaling factor controlling the spacing between communities. It
+        multiplies the inter-community edge weights and scales the centroid
+        positions outwards. After scaling, centroids that are pushed too far
+        from the mean are clamped so that their distance does not exceed
+        ``mean(distances) * separation``. Higher values therefore increase the
+        separation between communities while avoiding extreme outliers.
     """
     # create a weighted graph, in which each node corresponds to a community,
     # and each edge weight to the number of edges between communities
@@ -1601,12 +1604,21 @@ def _get_community_positions(edges, node_to_community, community_size, origin, s
         node_size=community_size, origin=origin, scale=scale, pad_by=pad_by,
     )
 
+    keys = list(community_centroids.keys())
+    values = np.array(list(community_centroids.values()))
+    center = values.mean(axis=0)
+
+    # scale communities outwards
     if separation != 1.0:
-        keys = list(community_centroids.keys())
-        values = np.array(list(community_centroids.values()))
-        center = values.mean(axis=0)
-        scaled = (values - center) * separation + center
-        community_centroids = dict(zip(keys, scaled))
+        values = (values - center) * separation + center
+
+    # clamp communities that are pushed too far away
+    dist = np.linalg.norm(values - center, axis=1)
+    max_radius = np.mean(dist) * separation
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scaling = np.minimum(1, max_radius / dist)
+    values = center + (values - center) * scaling[:, None]
+    community_centroids = dict(zip(keys, values))
 
     return community_centroids
 
