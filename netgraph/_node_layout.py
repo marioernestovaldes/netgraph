@@ -1499,7 +1499,7 @@ def get_shell_layout(edges, shells, radii=None, origin=(0, 0), scale=(1, 1), pad
 
 
 @_handle_multiple_components
-def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05):
+def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05, separation=1.0, intra_layout="fr", intra_layout_kwargs=None):
     """Community node layout for modular graphs.
 
     This implements the following steps:
@@ -1509,7 +1509,10 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
        and the weights correspond to the number of edges between communities.
        Determine the centroid of each community using the FR algorithm, i.e. a spring layout.
     2. Position the nodes within each community:
-       For each community, create a new graph. Find a layout for the subgraph.
+       For each community, create a new graph. By default the subgraph is laid
+       out using :func:`get_fruchterman_reingold_layout` on the unit box
+       ``[-1, -1]`` to ``[+1, +1]``. The layout function can be overridden via
+       ``intra_layout``.
     3. Combine positions computed in in 1) and 3).
     4. Rotate communities around their centroid to reduce the length of the edges between them.
 
@@ -1536,6 +1539,18 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
 
         :code:`ymax = origin[1] + scale[1] - pad_by * scale[1]`
 
+    separation : float, default 1.0
+        Scaling factor that controls the spacing between communities. Values
+        greater than ``1`` increase the distance between community centroids,
+        while values less than ``1`` move them closer together.
+    intra_layout : str or callable, default "fr"
+        Node layout routine used to arrange nodes within each community. If a
+        string is provided, only ``"fr"`` (Fruchterman–Reingold) is currently
+        recognised. Alternatively a callable can be supplied which is expected
+        to follow the same interface as :func:`get_fruchterman_reingold_layout`.
+    intra_layout_kwargs : dict or None, default None
+        Optional keyword arguments forwarded to ``intra_layout``.
+
     Returns
     -------
     node_positions : dict
@@ -1555,8 +1570,8 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
     node_to_community = {node : node_to_community[node] for node in nodes}
 
     community_size = _get_community_sizes(node_to_community, scale)
-    community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by)
-    relative_node_positions = _get_within_community_positions(edges, node_to_community)
+    community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation)
+    relative_node_positions = _get_within_community_positions(edges, node_to_community, intra_layout, intra_layout_kwargs)
     node_positions = _combine_positions(node_to_community, community_centroids, community_size, relative_node_positions)
     node_positions = _rotate_communities(edges, node_to_community, community_centroids, node_positions)
 
@@ -1573,17 +1588,49 @@ def _get_community_sizes(node_to_community, scale):
     return community_size
 
 
-def _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by):
-    """Compute a centroid position for each community."""
+def _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation):
+    """Compute a centroid position for each community.
+
+    Parameters
+    ----------
+    separation : float
+        Scaling factor controlling the spacing between communities. It
+        multiplies the inter-community edge weights and scales the centroid
+        positions outwards. After scaling, centroids that are pushed too far
+        from the mean are clamped so that their distance does not exceed
+        ``mean(distances) * separation``. Higher values therefore increase the
+        separation between communities while avoiding extreme outliers.
+    """
     # create a weighted graph, in which each node corresponds to a community,
     # and each edge weight to the number of edges between communities
     between_community_edges = _find_between_community_edges(edges, node_to_community)
+    between_community_edges = {
+        edge: weight * separation for edge, weight in between_community_edges.items()
+    }
 
     # find layout for communities
-    return get_fruchterman_reingold_layout(
+    community_centroids = get_fruchterman_reingold_layout(
         list(between_community_edges.keys()), edge_weight=between_community_edges,
         node_size=community_size, origin=origin, scale=scale, pad_by=pad_by,
     )
+
+    keys = list(community_centroids.keys())
+    values = np.array(list(community_centroids.values()))
+    center = values.mean(axis=0)
+
+    # scale communities outwards
+    if separation != 1.0:
+        values = (values - center) * separation + center
+
+    # clamp communities that are pushed too far away
+    dist = np.linalg.norm(values - center, axis=1)
+    max_radius = np.mean(dist) * separation
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scaling = np.minimum(1, max_radius / dist)
+    values = center + (values - center) * scaling[:, None]
+    community_centroids = dict(zip(keys, values))
+
+    return community_centroids
 
 
 def _find_between_community_edges(edges, node_to_community):
@@ -1606,22 +1653,48 @@ def _find_between_community_edges(edges, node_to_community):
     return between_community_edges
 
 
-def _get_within_community_positions(edges, node_to_community):
+def _get_within_community_positions(edges, node_to_community, intra_layout, intra_layout_kwargs):
     """Positions nodes within communities."""
+    if intra_layout_kwargs is None:
+        intra_layout_kwargs = dict()
+
     community_to_nodes = _invert_dict(node_to_community)
     node_positions = dict()
     for community, nodes in community_to_nodes.items():
         if len(nodes) > 1:
             subgraph = _get_subgraph(edges, list(nodes))
             if subgraph:
-                subgraph_node_positions = get_fruchterman_reingold_layout(
-                    subgraph, nodes=nodes, origin=np.array([-1, -1]), scale=np.array([2, 2]))
+                if callable(intra_layout):
+                    layout_func = intra_layout
+                elif isinstance(intra_layout, str):
+                    if intra_layout.lower() in ("fr", "spring"):
+                        layout_func = get_fruchterman_reingold_layout
+                    else:
+                        warnings.warn(
+                            f"Unknown intra_layout '{intra_layout}'. Falling back to Fruchterman-Reingold."
+                        )
+                        layout_func = get_fruchterman_reingold_layout
+                else:
+                    warnings.warn(
+                        "intra_layout must be a string or callable. Falling back to Fruchterman-Reingold."
+                    )
+                    layout_func = get_fruchterman_reingold_layout
+
+                subgraph_node_positions = layout_func(
+                    subgraph,
+                    nodes=nodes,
+                    origin=np.array([-1, -1]),
+                    scale=np.array([2, 2]),
+                    **intra_layout_kwargs,
+                )
                 node_positions.update(subgraph_node_positions)
             else:
-                warnings.warn(f"There are no connections within community {community}. The placement of of nodes within this community is arbitrary.")
-                node_positions.update({node : np.random.rand(2) * 2 + np.array([-1, -1]) for node in nodes})
+                warnings.warn(
+                    f"There are no connections within community {community}. The placement of of nodes within this community is arbitrary."
+                )
+                node_positions.update({node: np.random.rand(2) * 2 + np.array([-1, -1]) for node in nodes})
         elif len(nodes) == 1:
-            node_positions.update({nodes.pop() : np.array([0., 0.])})
+            node_positions.update({nodes.pop(): np.array([0.0, 0.0])})
     return node_positions
 
 

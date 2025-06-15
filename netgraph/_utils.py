@@ -357,9 +357,14 @@ def _get_orthogonal_unit_vector(v):
 
     """
 
-    v = v / np.linalg.norm(v, axis=-1)[:, None] # unit vector
+    norm = np.linalg.norm(v, axis=-1, keepdims=True)
+    norm = np.where(norm == 0, 1, norm)
+    v = v / norm                                # unit vector
+
     w = np.c_[-v[:,1], v[:,0]]                  # orthogonal vector
-    w = w / np.linalg.norm(w, axis=-1)[:, None] # orthogonal unit vector
+    norm = np.linalg.norm(w, axis=-1, keepdims=True)
+    norm = np.where(norm == 0, 1, norm)
+    w = w / norm                                # orthogonal unit vector
     return w
 
 

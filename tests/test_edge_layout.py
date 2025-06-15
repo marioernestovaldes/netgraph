@@ -8,6 +8,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from netgraph._main import Graph
+from netgraph._edge_layout import (
+    get_bundled_edge_paths,
+    _get_edge_compatibility,
+    _initialize_bundled_control_points,
+    _get_Fe,
+)
 from netgraph._utils import _get_point_on_a_circle
 from toy_graphs import star
 
@@ -154,3 +160,87 @@ def test_draw_star_graph_with_bundled_edges():
     node_positions = {k : np.array(v) for k, v in node_positions.items()}
     Graph(star, node_layout=node_positions, edge_layout='bundled', ax=ax)
     return fig
+
+
+def test_bundled_edges_processes_one():
+    edges = [(0, 1), (2, 3)]
+    node_positions = {
+        0: np.array([0, 0.25]),
+        1: np.array([1, 0.25]),
+        2: np.array([0, 0.75]),
+        3: np.array([1, 0.75]),
+    }
+    paths_serial = get_bundled_edge_paths(edges, node_positions)
+    paths_process = get_bundled_edge_paths(edges, node_positions, processes=1)
+    for edge in paths_serial:
+        assert np.allclose(paths_serial[edge], paths_process[edge])
+
+
+def test_bundled_edges_processes_two():
+    edges = [(0, 1), (1, 2)]
+    node_positions = {
+        0: np.array([0, 0.25]),
+        1: np.array([0.5, 0.75]),
+        2: np.array([1, 0.25]),
+    }
+    paths_serial = get_bundled_edge_paths(edges, node_positions)
+    paths_process = get_bundled_edge_paths(edges, node_positions, processes=2)
+    for edge in paths_serial:
+        assert np.allclose(paths_serial[edge], paths_process[edge])
+
+
+def _old_edge_compatibility_worker(args):
+    """Original loop-based worker from previous implementation."""
+    from netgraph._edge_layout import (
+        _get_scale_compatibility,
+        _get_position_compatibility,
+        _get_angle_compatibility,
+        _get_visibility_compatibility,
+    )
+    chunk, edge_to_segment, threshold = args
+    out = []
+    for e1, e2 in chunk:
+        P = edge_to_segment[e1]
+        Q = edge_to_segment[e2]
+
+        compatibility = 1
+        compatibility *= _get_scale_compatibility(P, Q)
+        if compatibility < threshold:
+            continue
+        compatibility *= _get_position_compatibility(P, Q)
+        if compatibility < threshold:
+            continue
+        compatibility *= _get_angle_compatibility(P, Q)
+        if compatibility < threshold:
+            continue
+        compatibility *= _get_visibility_compatibility(P, Q)
+        if compatibility < threshold:
+            continue
+
+        reverse = min(np.linalg.norm(P[0] - Q[0]), np.linalg.norm(P[1] - Q[1])) > \
+            min(np.linalg.norm(P[0] - Q[1]), np.linalg.norm(P[1] - Q[0]))
+
+        out.append((e1, e2, compatibility, reverse))
+    return out
+
+
+def test_edge_compatibility_worker_vectorised_matches_loop():
+    from netgraph._edge_layout import Segment, _edge_compatibility_worker
+    import itertools
+
+    node_positions = {i: np.random.rand(2) for i in range(6)}
+    edges = [(i, i + 1) for i in range(5)]
+    edge_to_segment = {
+        e: Segment(node_positions[e[0]], node_positions[e[1]]) for e in edges
+    }
+    pairs = list(itertools.combinations(edges, 2))
+    args = (pairs, edge_to_segment, 0.0)
+
+    expected = _old_edge_compatibility_worker(args)
+    result = _edge_compatibility_worker(args)
+
+    assert len(expected) == len(result)
+    assert all(
+        np.allclose(e[2], r[2]) and (e[0] == r[0]) and (e[1] == r[1]) and (e[3] == r[3])
+        for e, r in zip(sorted(expected), sorted(result))
+    )
