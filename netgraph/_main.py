@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from . import logger
 
 from uuid import uuid4
 from scipy.spatial import cKDTree
@@ -280,6 +281,8 @@ class BaseGraph(object):
                  ax=None,
                  *args, **kwargs
     ):
+        logger.info("Building graph …")
+
         self.edges = _parse_edge_list(edges)
 
         self.nodes = self._initialize_nodes(nodes)
@@ -314,9 +317,12 @@ class BaseGraph(object):
         # Initialise node and edge layouts.
         self.origin = origin
         self.scale = scale
+
+        logger.info("Computing node layout '%s'", node_layout)
         self.node_positions = self._initialize_node_layout(
             node_layout, node_layout_kwargs, origin, scale, node_size)
 
+        logger.info("Computing edge layout '%s'", edge_layout)
         self.edge_paths, self.edge_layout, self.edge_layout_kwargs = self._initialize_edge_layout(
             edge_layout, edge_layout_kwargs, origin, scale, edge_width)
 
@@ -324,10 +330,12 @@ class BaseGraph(object):
         self.ax = self._initialize_axis(ax)
 
         self.edge_artists = dict()
+        logger.info("Drawing edges")
         self.draw_edges(self.edge_paths, edge_width, edge_color, edge_alpha,
                         edge_zorder, arrows, node_size)
 
         self.node_artists = dict()
+        logger.info("Drawing nodes")
         self.draw_nodes(self.nodes, self.node_positions,
                         node_shape, node_size, node_edge_width,
                         node_color, node_edge_color, node_alpha, node_zorder)
@@ -360,6 +368,8 @@ class BaseGraph(object):
 
         if prettify:
             _make_pretty(self.ax)
+
+        logger.info("Graph ready")
 
 
     def _initialize_nodes(self, nodes):
@@ -1536,7 +1546,7 @@ class ClickableArtists(object):
                 if not event.key in ('control', 'super+??', 'ctrl+??'):
                     self._deselect_all_artists()
         else:
-            print("Warning: clicked outside axis limits!")
+            logger.info("Warning: clicked outside axis limits!")
 
 
     def _toggle_select_artist(self, artist):
@@ -1699,7 +1709,7 @@ class DraggableArtists(SelectableArtists):
                     self._currently_clicking_on_artist = artist
                     break
         else:
-            print("Warning: clicked outside axis limits!")
+            logger.info("Warning: clicked outside axis limits!")
 
 
     def _on_motion(self, event):

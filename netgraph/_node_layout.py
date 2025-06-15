@@ -8,6 +8,8 @@ Node layout routines.
 import warnings
 import itertools
 import numpy as np
+import logging
+from . import logger
 
 from functools import wraps
 from itertools import combinations, product
@@ -455,10 +457,19 @@ def get_fruchterman_reingold_layout(edges,
 
     temperatures = _get_temperature_decay(initial_temperature, total_iterations)
 
+    logger.info(
+        "Running spring layout with %d iterations", total_iterations
+    )
+
     # --------------------------------------------------------------------------------
     # main loop
 
+    log_interval = max(total_iterations // 10, 1)
     for ii, temperature in enumerate(temperatures):
+        if logger.isEnabledFor(logging.INFO) and (ii % log_interval == 0):
+            logger.info(
+                "\titeration %d / %d", ii + 1, total_iterations
+            )
         candidate_positions = _fruchterman_reingold(mobile_positions, fixed_positions,
                                                     mobile_node_sizes, fixed_node_sizes,
                                                     adjacency, temperature, k)
@@ -1867,8 +1878,8 @@ def get_geometric_layout(edges, edge_length, node_size=0., tol=1e-3, origin=(0, 
     )
 
     if not result.success:
-        print("Warning: could not compute valid node positions for the given edge lengths.")
-        print(f"scipy.optimize.minimize: {result.message}.")
+        logger.warning("Could not compute valid node positions for the given edge lengths.")
+        logger.warning(f"scipy.optimize.minimize: {result.message}.")
 
     node_positions_as_array = result.x.reshape((-1, 2))
     node_positions_as_array = _fit_to_frame(node_positions_as_array, np.array(origin), np.array(scale), pad_by)

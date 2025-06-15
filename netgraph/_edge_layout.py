@@ -8,6 +8,8 @@ Edge routing routines.
 import itertools
 import warnings
 import numpy as np
+import logging
+from . import logger
 
 from uuid import uuid4
 from functools import wraps
@@ -540,10 +542,17 @@ def _get_fruchterman_reingold_layout(edges,
 
     temperatures = _get_temperature_decay(initial_temperature, total_iterations)
 
+    logger.info(
+        "Running spring layout with %d iterations", total_iterations
+    )
+
     # --------------------------------------------------------------------------------
     # main loop
 
+    log_interval = max(total_iterations // 10, 1)
     for ii, temperature in enumerate(temperatures):
+        if logger.isEnabledFor(logging.INFO) and (ii % log_interval == 0):
+            logger.info("\titeration %d / %d", ii + 1, total_iterations)
         candidate_positions = _fruchterman_reingold(mobile_positions, fixed_positions,
                                                     mobile_node_sizes, fixed_node_sizes,
                                                     adjacency, temperature, k)

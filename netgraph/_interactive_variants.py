@@ -8,6 +8,7 @@ InteractiveGraph variants.
 import itertools
 import numpy as np
 import matplotlib.pyplot as plt
+from . import logger
 
 from functools import partial
 from matplotlib.patches import Rectangle
@@ -144,7 +145,7 @@ class MutableGraph(InteractiveGraph):
                         self._add_edge((self._nascent_edge.source, node))
                         self._update_edges([(self._nascent_edge.source, node)])
                     else:
-                        print("Edge already exists!")
+                        logger.info("Edge already exists!")
                     self._remove_nascent_edge()
                 else:
                     self._nascent_edge = self._add_nascent_edge(node)
@@ -210,7 +211,7 @@ class MutableGraph(InteractiveGraph):
 
     def _add_node(self, event):
         if event.inaxes != self.ax:
-            print('Position outside of axis limits! Cannot create node.')
+            logger.info('Position outside of axis limits! Cannot create node.')
             return
 
         # create node ID; use smallest unused int
@@ -527,19 +528,19 @@ class EditableGraph(MutableGraph):
         self._currently_writing_annotations = False
         self.fig.canvas.manager.key_press_handler_id \
             = self.fig.canvas.mpl_connect('key_press_event', self.fig.canvas.manager.key_press)
-        print('Finished writing.')
+        logger.info('Finished writing.')
 
 
     def _initiate_writing_labels(self):
         self._currently_writing_labels = True
         self.fig.canvas.mpl_disconnect(self.fig.canvas.manager.key_press_handler_id)
-        print('Initiated writing label(s).')
+        logger.info('Initiated writing label(s).')
 
 
     def _initiate_writing_annotations(self):
         self._currently_writing_annotations = True
         self.fig.canvas.mpl_disconnect(self.fig.canvas.manager.key_press_handler_id)
-        print('Initiated writing annotations(s).')
+        logger.info('Initiated writing annotations(s).')
 
 
     def _edit_labels(self, key):
