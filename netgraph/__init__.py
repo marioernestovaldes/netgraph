@@ -99,6 +99,27 @@ Examples
 """
 
 __version__ = "4.13.2"
+
+import logging
+
+# configure package logger
+logger = logging.getLogger("netgraph")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.WARNING)
+
+
+def enable_verbose():
+    """Enable informative log output."""
+    logger.setLevel(logging.INFO)
+
+
+def disable_verbose():
+    """Disable informative log output."""
+    logger.setLevel(logging.WARNING)
 __author__ = "Paul Brodersen"
 __email__ = "paulbrodersen+netgraph@gmail.com"
 
@@ -169,4 +190,7 @@ __all__ = [
     'InteractiveArcDiagram',
     'MutableArcDiagram',
     'EditableArcDiagram',
+    'logger',
+    'enable_verbose',
+    'disable_verbose',
 ]

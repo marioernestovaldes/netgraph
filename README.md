@@ -95,6 +95,21 @@ help(InteractiveGraph)
 help(EditableGraph)
 ```
 
+## Controlling Verbose Output
+
+By default, Netgraph only shows warnings. To get additional
+information about what the library is doing, enable verbose logging:
+
+```python
+import netgraph
+netgraph.enable_verbose()
+```
+
+You can disable it again with `netgraph.disable_verbose()`.
+When verbose logging is enabled, Netgraph reports progress during
+layout computations and graph construction so you can monitor long
+operations.
+
 ## Examples
 
 
