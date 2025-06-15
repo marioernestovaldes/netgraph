@@ -1499,7 +1499,7 @@ def get_shell_layout(edges, shells, radii=None, origin=(0, 0), scale=(1, 1), pad
 
 
 @_handle_multiple_components
-def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05, separation=1.0):
+def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05, separation=1.0, intra_layout="fr", intra_layout_kwargs=None):
     """Community node layout for modular graphs.
 
     This implements the following steps:
@@ -1509,7 +1509,10 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
        and the weights correspond to the number of edges between communities.
        Determine the centroid of each community using the FR algorithm, i.e. a spring layout.
     2. Position the nodes within each community:
-       For each community, create a new graph. Find a layout for the subgraph.
+       For each community, create a new graph. By default the subgraph is laid
+       out using :func:`get_fruchterman_reingold_layout` on the unit box
+       ``[-1, -1]`` to ``[+1, +1]``. The layout function can be overridden via
+       ``intra_layout``.
     3. Combine positions computed in in 1) and 3).
     4. Rotate communities around their centroid to reduce the length of the edges between them.
 
@@ -1540,6 +1543,13 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
         Scaling factor that controls the spacing between communities. Values
         greater than ``1`` increase the distance between community centroids,
         while values less than ``1`` move them closer together.
+    intra_layout : str or callable, default "fr"
+        Node layout routine used to arrange nodes within each community. If a
+        string is provided, only ``"fr"`` (Fruchterman–Reingold) is currently
+        recognised. Alternatively a callable can be supplied which is expected
+        to follow the same interface as :func:`get_fruchterman_reingold_layout`.
+    intra_layout_kwargs : dict or None, default None
+        Optional keyword arguments forwarded to ``intra_layout``.
 
     Returns
     -------
@@ -1561,7 +1571,7 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
 
     community_size = _get_community_sizes(node_to_community, scale)
     community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation)
-    relative_node_positions = _get_within_community_positions(edges, node_to_community)
+    relative_node_positions = _get_within_community_positions(edges, node_to_community, intra_layout, intra_layout_kwargs)
     node_positions = _combine_positions(node_to_community, community_centroids, community_size, relative_node_positions)
     node_positions = _rotate_communities(edges, node_to_community, community_centroids, node_positions)
 
@@ -1643,22 +1653,48 @@ def _find_between_community_edges(edges, node_to_community):
     return between_community_edges
 
 
-def _get_within_community_positions(edges, node_to_community):
+def _get_within_community_positions(edges, node_to_community, intra_layout, intra_layout_kwargs):
     """Positions nodes within communities."""
+    if intra_layout_kwargs is None:
+        intra_layout_kwargs = dict()
+
     community_to_nodes = _invert_dict(node_to_community)
     node_positions = dict()
     for community, nodes in community_to_nodes.items():
         if len(nodes) > 1:
             subgraph = _get_subgraph(edges, list(nodes))
             if subgraph:
-                subgraph_node_positions = get_fruchterman_reingold_layout(
-                    subgraph, nodes=nodes, origin=np.array([-1, -1]), scale=np.array([2, 2]))
+                if callable(intra_layout):
+                    layout_func = intra_layout
+                elif isinstance(intra_layout, str):
+                    if intra_layout.lower() in ("fr", "spring"):
+                        layout_func = get_fruchterman_reingold_layout
+                    else:
+                        warnings.warn(
+                            f"Unknown intra_layout '{intra_layout}'. Falling back to Fruchterman-Reingold."
+                        )
+                        layout_func = get_fruchterman_reingold_layout
+                else:
+                    warnings.warn(
+                        "intra_layout must be a string or callable. Falling back to Fruchterman-Reingold."
+                    )
+                    layout_func = get_fruchterman_reingold_layout
+
+                subgraph_node_positions = layout_func(
+                    subgraph,
+                    nodes=nodes,
+                    origin=np.array([-1, -1]),
+                    scale=np.array([2, 2]),
+                    **intra_layout_kwargs,
+                )
                 node_positions.update(subgraph_node_positions)
             else:
-                warnings.warn(f"There are no connections within community {community}. The placement of of nodes within this community is arbitrary.")
-                node_positions.update({node : np.random.rand(2) * 2 + np.array([-1, -1]) for node in nodes})
+                warnings.warn(
+                    f"There are no connections within community {community}. The placement of of nodes within this community is arbitrary."
+                )
+                node_positions.update({node: np.random.rand(2) * 2 + np.array([-1, -1]) for node in nodes})
         elif len(nodes) == 1:
-            node_positions.update({nodes.pop() : np.array([0., 0.])})
+            node_positions.update({nodes.pop(): np.array([0.0, 0.0])})
     return node_positions
 
 
