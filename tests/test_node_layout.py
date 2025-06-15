@@ -262,3 +262,51 @@ def test_community_layout_separation_scaling():
         return np.linalg.norm(centroids[0] - centroids[1])
 
     assert avg_centroid_distance(pos_spread) > avg_centroid_distance(pos_default)
+
+
+def test_community_layout_custom_callable():
+    edges = [
+        (0, 1), (1, 2), (2, 0),
+        (3, 4), (4, 5), (5, 3),
+        (2, 3),
+    ]
+    node_to_community = {
+        0: 0, 1: 0, 2: 0,
+        3: 1, 4: 1, 5: 1,
+    }
+
+    calls = []
+
+    def dummy_layout(subgraph, nodes=None, origin=(0, 0), scale=(1, 1), **kwargs):
+        calls.append(set(nodes))
+        return {node: np.zeros(2) for node in nodes}
+
+    get_community_layout(
+        edges,
+        node_to_community=node_to_community,
+        intra_layout=dummy_layout,
+    )
+
+    assert len(calls) == 2
+    assert set(frozenset(c) for c in calls) == {frozenset({0, 1, 2}), frozenset({3, 4, 5})}
+
+
+def test_community_layout_intra_layout_kwargs():
+    edges = [
+        (0, 1), (1, 2), (2, 0),
+        (3, 4), (4, 5), (5, 3),
+        (2, 3),
+    ]
+    node_to_community = {
+        0: 0, 1: 0, 2: 0,
+        3: 1, 4: 1, 5: 1,
+    }
+
+    pos_default = get_community_layout(edges, node_to_community=node_to_community)
+    pos_short = get_community_layout(
+        edges,
+        node_to_community=node_to_community,
+        intra_layout_kwargs={"total_iterations": 1},
+    )
+
+    assert pos_default.keys() == pos_short.keys()
