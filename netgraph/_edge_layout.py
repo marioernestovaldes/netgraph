@@ -551,8 +551,8 @@ def _get_fruchterman_reingold_layout(edges,
 
     log_interval = max(total_iterations // 10, 1)
     for ii, temperature in enumerate(temperatures):
-        if logger.isEnabledFor(logging.INFO) and (ii % log_interval == 0):
-            logger.info("\titeration %d / %d", ii + 1, total_iterations)
+        if logger.isEnabledFor(logging.DEBUG) and (ii % log_interval == 0):
+            logger.debug("\titeration %d / %d", ii + 1, total_iterations)
         candidate_positions = _fruchterman_reingold(mobile_positions, fixed_positions,
                                                     mobile_node_sizes, fixed_node_sizes,
                                                     adjacency, temperature, k)
