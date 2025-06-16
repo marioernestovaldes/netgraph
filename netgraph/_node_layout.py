@@ -13,7 +13,7 @@ from . import logger
 
 from functools import wraps
 from itertools import combinations, product
-from scipy.spatial import Voronoi
+from scipy.spatial import Voronoi, QhullError
 from scipy.spatial.distance import cdist, pdist, squareform
 from scipy.optimize import minimize, NonlinearConstraint
 
@@ -1668,6 +1668,19 @@ def _get_community_positions(edges, node_to_community, community_size, origin, s
         scaling = np.minimum(1, max_radius / dist)
     values = center + (values - center) * scaling[:, None]
     community_centroids = dict(zip(keys, values))
+
+    # ensure that communities do not overlap by removing overlaps between
+    # their centroid positions weighted by community size
+    if len(community_centroids) > 3:
+        try:
+            community_centroids = _remove_node_overlap(
+                community_centroids,
+                node_size=community_size,
+                origin=origin,
+                scale=scale,
+            )
+        except QhullError:
+            pass
 
     return community_centroids
 
