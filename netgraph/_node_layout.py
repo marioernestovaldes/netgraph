@@ -1510,7 +1510,17 @@ def get_shell_layout(edges, shells, radii=None, origin=(0, 0), scale=(1, 1), pad
 
 
 @_handle_multiple_components
-def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), pad_by=0.05, separation=1.0, intra_layout="fr", intra_layout_kwargs=None):
+def get_community_layout(
+    edges,
+    node_to_community,
+    origin=(0, 0),
+    scale=(1, 1),
+    pad_by=0.05,
+    separation=1.0,
+    intra_layout="fr",
+    intra_layout_kwargs=None,
+    power=0.5,
+):
     """Community node layout for modular graphs.
 
     This implements the following steps:
@@ -1561,6 +1571,12 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
         to follow the same interface as :func:`get_fruchterman_reingold_layout`.
     intra_layout_kwargs : dict or None, default None
         Optional keyword arguments forwarded to ``intra_layout``.
+    power : float, default 0.5
+        Exponent used to scale the area allocated to each community. Values
+        greater than ``1`` emphasize differences in community size, while
+        values between ``0`` and ``1`` reduce them. A value of ``0`` assigns
+        all communities the same area regardless of the number of nodes they
+        contain.
 
     Returns
     -------
@@ -1580,7 +1596,7 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
     # i.e. only contains nodes that are also present in edges
     node_to_community = {node : node_to_community[node] for node in nodes}
 
-    community_size = _get_community_sizes(node_to_community, scale)
+    community_size = _get_community_sizes(node_to_community, scale, power=power)
     community_centroids = _get_community_positions(edges, node_to_community, community_size, origin, scale, pad_by, separation)
     relative_node_positions = _get_within_community_positions(edges, node_to_community, intra_layout, intra_layout_kwargs)
     node_positions = _combine_positions(node_to_community, community_centroids, community_size, relative_node_positions)
@@ -1589,13 +1605,25 @@ def get_community_layout(edges, node_to_community, origin=(0, 0), scale=(1, 1), 
     return node_positions
 
 
-def _get_community_sizes(node_to_community, scale):
-    """Compute the area of the canvas reserved for each community."""
+def _get_community_sizes(node_to_community, scale, power=0.5):
+    """Compute the area of the canvas reserved for each community.
+
+    The size allocation is scaled by ``len(nodes) ** power`` to avoid
+    communities with few nodes collapsing into a single point when the
+    network contains many communities.  The default ``power`` of ``0.5``
+    results in a square-root scaling with community size which gives
+    small communities a reasonable minimum area while still allowing
+    larger communities to occupy more space.
+    """
+
     total_nodes = len(node_to_community)
     max_radius = np.linalg.norm(scale) / 2
-    scalar = max_radius / total_nodes # this is the worst case scenario, where all comunities are lined up like beads on a string; may warrant revisiting
+    scalar = max_radius / (total_nodes ** power)
     community_to_nodes = _invert_dict(node_to_community)
-    community_size = {community : len(nodes) * scalar for community, nodes in community_to_nodes.items()}
+    community_size = {
+        community: (len(nodes) ** power) * scalar
+        for community, nodes in community_to_nodes.items()
+    }
     return community_size
 
 

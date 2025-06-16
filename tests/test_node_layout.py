@@ -310,3 +310,36 @@ def test_community_layout_intra_layout_kwargs():
     )
 
     assert pos_default.keys() == pos_short.keys()
+
+
+def test_community_layout_power_scaling():
+    """Changing ``power`` should modify relative community sizes."""
+
+    # large community with six nodes arranged in a ring
+    big = list(range(6))
+    edges_big = [(i, (i + 1) % 6) for i in range(6)]
+
+    # small community with two nodes
+    small = [6, 7]
+    edges_small = [(6, 7)]
+
+    # one inter-community edge
+    edges = edges_big + edges_small + [(5, 6)]
+
+    node_to_community = {node: 0 for node in big}
+    node_to_community.update({node: 1 for node in small})
+
+    pos_sqrt = get_community_layout(edges, node_to_community=node_to_community)
+    pos_linear = get_community_layout(
+        edges, node_to_community=node_to_community, power=1.0
+    )
+
+    def community_radius(pos, nodes):
+        coords = np.array([pos[n] for n in nodes])
+        centroid = coords.mean(axis=0)
+        return np.max(np.linalg.norm(coords - centroid, axis=1))
+
+    ratio_sqrt = community_radius(pos_sqrt, big) / community_radius(pos_sqrt, small)
+    ratio_linear = community_radius(pos_linear, big) / community_radius(pos_linear, small)
+
+    assert ratio_linear > ratio_sqrt
