@@ -192,6 +192,21 @@ Bibtex entry:
 - 4.2.2 Fixed a bug that occurred every time an InteractiveGraph was initialised without tabular annotations.
 - 4.2.1 Added online documentation.
 
+## Changes in this fork
+
+This repository extends the original `netgraph` project with additional
+features and performance improvements. Highlights include:
+
+- Multi-core support for bundled edge layouts via the `processes` argument in
+  `get_bundled_edge_paths`.
+- Vectorised and chunked computations that speed up compatibility and layout
+  calculations.
+- Extra controls for community layouts such as a `separation` parameter and
+  scaling communities by size.
+- More informative progress logging with reduced verbosity for long-running
+  operations.
+- Various bug fixes and quality-of-life tweaks discovered during development.
+
 ## Help, I don't know how to do ...!
 
 Please raise an issue. Include any relevant code and data in a
